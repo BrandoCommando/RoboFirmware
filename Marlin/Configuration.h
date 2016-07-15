@@ -141,7 +141,7 @@
 //Check for thermistor temerature freefall during the print,
 //This usually indicates that the thermistor has been removed from the head.
 #define TEMP_SENSOR_DISCONNECT_CHECK 2
-#define TEMP_SENSOR_DISCONNECT_LIMIT 20 
+#define TEMP_SENSOR_DISCONNECT_LIMIT 40 
 
 // Actual temperature must be close to target for this long before M109 returns success
 #define TEMP_RESIDENCY_TIME 10  // (seconds)
