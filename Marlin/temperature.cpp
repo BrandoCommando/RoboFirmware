@@ -515,7 +515,11 @@ void manage_heater()
       if(hot_temperature[e] - current_temperature[e] > TEMP_SENSOR_DISCONNECT_LIMIT) {
 	disable_heater();
 	SERIAL_ERROR_START;
-	SERIAL_ERRORLNPGM("Extruder switched off. Temperature fell too much during print!");
+	SERIAL_ERRORPGM("Extruder switched off. Temperature(");
+	SERIAL_ERROR(current_temperature[e]);
+	SERIAL_ERRORPGM(") fell too much(");
+	SERIAL_ERROR(TEMP_SENSOR_DISCONNECT_LIMIT);
+	SERIAL_ERRORLNPGM(") during print!");
 	LCD_ALERTMESSAGEPGM("Err: TEMP FALL ERROR");
 	#ifndef BOGUS_TEMPERATURE_FAILSAFE_OVERRIDE
 	  Stop();
@@ -969,7 +973,9 @@ void min_temp_error(uint8_t e) {
   if(IsStopped() == false) {
     SERIAL_ERROR_START;
     SERIAL_ERRORLN((int)e);
-    SERIAL_ERRORLNPGM(": Extruder switched off. MINTEMP triggered !");
+    SERIAL_ERRORPGM(": Extruder switched off. MINTEMP (");
+    SERIAL_ERROR(current_temperature_raw[e]);
+    SERIAL_ERRORLNPGM(") triggered !");
     LCD_ALERTMESSAGEPGM("Err: MINTEMP");
   }
   #ifndef BOGUS_TEMPERATURE_FAILSAFE_OVERRIDE
@@ -1337,5 +1343,6 @@ float unscalePID_d(float d)
 }
 
 #endif //PIDTEMP
+
 
 

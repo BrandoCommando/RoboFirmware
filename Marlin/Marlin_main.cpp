@@ -204,6 +204,16 @@ float endstop_adj[3]={0,0,0};
 #endif
 float min_pos[3] = { X_MIN_POS, Y_MIN_POS, Z_MIN_POS };
 float max_pos[3] = { X_MAX_POS, Y_MAX_POS, Z_MAX_POS };
+#if defined(TOOL_SWITCH_PINS)
+const int toolswitch_pins[] = TOOL_SWITCH_PINS;
+#else
+const int toolswitch_pins[] = {};
+#endif
+#if defined(ZSOLENOID_PINS)
+const int zsolenoid_pins[] = ZSOLENOID_PINS;
+#else
+const int zsolenoid_pins[] = {};
+#endif
 bool axis_known_position[3] = {false, false, false};
 float zprobe_zoffset;
 
@@ -418,6 +428,77 @@ void suicide()
   #endif
 }
 
+void toolswitch_write(int dir)
+{
+	SERIAL_ECHO_START;
+	#if defined(TOOL_SWITCH_PINS)
+	SERIAL_ECHO("Turning tool switch: ");
+	for(int8_t tsi=0;tsi<(int8_t)sizeof(toolswitch_pins);tsi++)
+	{
+		digitalWrite(toolswitch_pins[tsi], dir == 0 ? HIGH : LOW);
+	}
+	SERIAL_ECHO(dir);
+	#else
+	SERIAL_ECHO("NOT turning tool switch: ");
+	#endif
+	#if defined(TOOL_SWITCH_SERVO_INDEX) && NUM_SERVOS > TOOL_SWITCH_SERVO_INDEX
+		#if defined(TOOL_SWITCH_SERVO_ANGLE_LOW)
+			int angleLow = TOOL_SWITCH_SERVO_ANGLE_LOW;
+		#else
+			int angleLow = 0;
+		#endif
+		#if defined(TOOL_SWITCH_SERVO_ANGLE_HIGH)
+			int angleHigh = TOOL_SWITCH_SERVO_ANGLE_HIGH;
+		#else
+			int angleHigh = 180;
+		#endif
+		SERIAL_ECHO(". Setting Servo to ");
+		SERIAL_ECHO(dir==0?angleHigh:angleLow);
+		servos[TOOL_SWITCH_SERVO_INDEX].write(dir == 0 ? angleHigh : angleLow);
+	#endif
+	SERIAL_ECHOLN(".");
+}
+
+void solenoid_write(int dir)
+{
+	#if defined(ZSOLENOID_PINS)
+	SERIAL_ECHO_START;
+	SERIAL_ECHO("Turning Z solenoid pins: ");
+	SERIAL_ECHO(dir);
+	SERIAL_ECHOLN(".");
+	for(int8_t si=0;si<(int8_t)sizeof(zsolenoid_pins);si++)
+	{
+		digitalWrite(zsolenoid_pins[si], dir == 0 ? HIGH : LOW);
+	}
+	delay(100);
+	#endif
+}
+
+void solenoid_init()
+{
+	#if defined(ZSOLENOID_PINS)
+	for(int8_t si=0;si<(int8_t)sizeof(zsolenoid_pins);si++)
+	{
+		pinMode(zsolenoid_pins[si], OUTPUT);
+	}
+	solenoid_write(0);
+	#endif
+}
+void toolswitch_init()
+{
+	SERIAL_ECHO_START;
+	#if defined(TOOL_SWITCH_PINS)
+	SERIAL_ECHOLN("Tool switch init");
+	for(int8_t tsi=0;tsi<(int8_t)sizeof(toolswitch_pins);tsi++)
+	{
+		pinMode(toolswitch_pins[tsi], OUTPUT);
+		digitalWrite(toolswitch_pins[tsi], HIGH);
+	}
+	#else
+	SERIAL_ECHOLN("NO Tool switch");
+	#endif
+}
+
 void servo_init()
 {
   #if (NUM_SERVOS >= 1) && defined(SERVO0_PIN) && (SERVO0_PIN > -1)
@@ -446,7 +527,7 @@ void servo_init()
   }
   #endif
 
-  #if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
+  #if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0) && NUM_SERVOS >= 1
   delay(PROBE_SERVO_DEACTIVATION_DELAY);
   servos[servo_endstops[Z_AXIS]].detach();
   #endif
@@ -501,6 +582,8 @@ void setup()
   st_init();    // Initialize stepper, this enables interrupts!
   setup_photpin();
   servo_init();
+  toolswitch_init();
+  solenoid_init();
 
   lcd_init();
   _delay_ms(1000);	// wait 1sec to display the splash screen
@@ -512,6 +595,8 @@ void setup()
   #ifdef DIGIPOT_I2C
     digipot_i2c_init();
   #endif
+  SERIAL_ECHO_START;
+  SERIAL_ECHOLN("Done with setup");
 }
 
 
@@ -957,6 +1042,7 @@ static void clean_up_after_endstop_move() {
 }
 
 static void engage_z_probe() {
+	solenoid_write(1);
     // Engage Z Servo endstop if enabled
     #ifdef SERVO_ENDSTOPS
     if (servo_endstops[Z_AXIS] > -1) {
@@ -973,6 +1059,7 @@ static void engage_z_probe() {
 }
 
 static void retract_z_probe() {
+	solenoid_write(0);
     // Retract Z Servo endstop if enabled
     #ifdef SERVO_ENDSTOPS
     if (servo_endstops[Z_AXIS] > -1) {
@@ -994,10 +1081,12 @@ static float probe_pt(float x, float y, float z_before) {
   do_blocking_move_to(current_position[X_AXIS], current_position[Y_AXIS], z_before);
   do_blocking_move_to(x - X_PROBE_OFFSET_FROM_EXTRUDER, y - Y_PROBE_OFFSET_FROM_EXTRUDER, current_position[Z_AXIS]);
 
+	solenoid_write(1);
   engage_z_probe();   // Engage Z Servo endstop if available
   run_z_probe();
   float measured_z = current_position[Z_AXIS];
   retract_z_probe();
+  solenoid_write(0);
 
   SERIAL_PROTOCOLPGM(MSG_BED);
   SERIAL_PROTOCOLPGM(" x: ");
@@ -1031,16 +1120,20 @@ static void homeaxis(int axis) {
 
 
     // Engage Servo endstop if enabled
-    #ifdef SERVO_ENDSTOPS
+    if(axis==Z_AXIS)
+	    solenoid_write(1);
+    #if defined(SERVO_ENDSTOPS)
       #if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
         if (axis==Z_AXIS) {
           engage_z_probe();
         }
 	    else
       #endif
+      #if defined(SERVO_ENDSTOPS)
       if (servo_endstops[axis] > -1) {
         servos[servo_endstops[axis]].write(servo_endstop_angles[axis * 2]);
       }
+      #endif
     #endif
 
     destination[axis] = 1.5 * max_length(axis) * axis_home_dir;
@@ -1086,6 +1179,7 @@ static void homeaxis(int axis) {
 #if defined (ENABLE_AUTO_BED_LEVELING) && (PROBE_SERVO_DEACTIVATION_DELAY > 0)
     if (axis==Z_AXIS) retract_z_probe();
 #endif
+	if (axis==Z_AXIS) solenoid_write(0);
 
   }
 }
@@ -1551,6 +1645,7 @@ void process_commands()
             current_position[Z_AXIS] = z_tmp - real_z + current_position[Z_AXIS];   //The difference is added to current position and sent to planner.
             plan_set_position(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS]);
         }
+        	solenoid_write(0);
         break;
 
     case 30: // G30 Single Z Probe
@@ -2646,7 +2741,7 @@ void process_commands()
       st_synchronize();
     }
     break;
-#if defined(ENABLE_AUTO_BED_LEVELING) && defined(SERVO_ENDSTOPS)
+#if defined(ENABLE_AUTO_BED_LEVELING)
     case 401:
     {
         engage_z_probe();    // Engage Z Servo endstop if available
@@ -2967,7 +3062,28 @@ void process_commands()
         }
       }
       #if EXTRUDERS > 1
+      #if defined(DEFAULT_AXIS_STEPS_PER_UNIT_E1)
+      if(tmp_extruder == 1) {
+	    SERIAL_ECHO_START;
+	    SERIAL_ECHO("Setting Extruder SPU: ");
+	    SERIAL_ECHO(DEFAULT_AXIS_STEPS_PER_UNIT_E1);
+	    SERIAL_ECHO(" (from ");
+	    SERIAL_ECHO(axis_steps_per_unit[E_AXIS]);
+	    SERIAL_ECHOLN(")");
+      	axis_steps_per_unit[E_AXIS] = DEFAULT_AXIS_STEPS_PER_UNIT_E1;
+      } else {
+      	float tmp[] = DEFAULT_AXIS_STEPS_PER_UNIT;
+	    SERIAL_ECHO_START;
+	    SERIAL_ECHO("Setting Extruder SPU: ");
+	    SERIAL_ECHO(tmp[E_AXIS]);
+	    SERIAL_ECHO(" (from ");
+	    SERIAL_ECHO(axis_steps_per_unit[E_AXIS]);
+	    SERIAL_ECHOLN(")");
+      	axis_steps_per_unit[E_AXIS] = tmp[E_AXIS];
+      }
+      #endif
       if(tmp_extruder != active_extruder) {
+      	toolswitch_write(tmp_extruder);
         // Save current position to return to after applying extruder offset
         memcpy(destination, current_position, sizeof(destination));
       #ifdef DUAL_X_CARRIAGE
